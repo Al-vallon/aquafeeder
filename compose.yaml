@@ -1,0 +1,88 @@
+# ===================================================================
+# Stack AquaFeeder — PostgreSQL + Mosquitto + Spring Boot + Next.js
+# Toute la configuration provient du fichier d'environnement choisi :
+#   ./scripts/start-dev.sh   -> --env-file .env.dev
+#   ./scripts/start-prod.sh  -> --env-file .env.prod
+# ===================================================================
+
+services:
+  db:
+    image: ${POSTGRES_IMAGE:-postgres:16-alpine}
+    container_name: ${COMPOSE_PROJECT_NAME:-aquafeeder}-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-aquafeeder}
+      POSTGRES_USER: ${POSTGRES_USER:-aquafeeder}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aquafeeder}
+      TZ: ${TZ:-Europe/Paris}
+    ports:
+      - "${POSTGRES_BIND_IP:-127.0.0.1}:${POSTGRES_HOST_PORT:-5432}:5432"
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aquafeeder} -d ${POSTGRES_DB:-aquafeeder}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  mqtt:
+    image: ${MQTT_IMAGE:-eclipse-mosquitto:2}
+    container_name: ${COMPOSE_PROJECT_NAME:-aquafeeder}-mqtt
+    restart: unless-stopped
+    env_file:
+      - ${AQUAFEEDER_ENV_FILE:-.env.dev}
+    ports:
+      - "${MQTT_BIND_IP:-127.0.0.1}:${MQTT_HOST_PORT:-1883}:1883"
+    volumes:
+      - ./mosquitto/entrypoint.sh:/usr/local/bin/aquafeeder-mosquitto-setup.sh:ro
+      - mqtt-data:/mosquitto/data
+    entrypoint: ["sh", "/usr/local/bin/aquafeeder-mosquitto-setup.sh"]
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: ${BACKEND_IMAGE:-aquafeeder/backend}:${BACKEND_TAG:-latest}
+    container_name: ${COMPOSE_PROJECT_NAME:-aquafeeder}-backend
+    restart: unless-stopped
+    env_file:
+      - ${AQUAFEEDER_ENV_FILE:-.env.dev}
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/${POSTGRES_DB:-aquafeeder}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-aquafeeder}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-aquafeeder}
+      MQTT_URL: tcp://mqtt:${MQTT_PORT:-1883}
+      AQUAFEEDER_DB_HOST: db
+    ports:
+      - "${BACKEND_BIND_IP:-0.0.0.0}:${BACKEND_HOST_PORT:-8080}:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+      mqtt:
+        condition: service_started
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8080}
+        NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME:-AquaFeeder}
+        NEXT_PUBLIC_POLL_INTERVAL_MS: ${NEXT_PUBLIC_POLL_INTERVAL_MS:-2500}
+        NEXT_PUBLIC_FOOD_CAPACITY_GRAMS: ${NEXT_PUBLIC_FOOD_CAPACITY_GRAMS:-100}
+        NEXT_PUBLIC_HISTORY_WINDOW_MINUTES: ${NEXT_PUBLIC_HISTORY_WINDOW_MINUTES:-10}
+        NEXT_PUBLIC_SCHEDULED_HOURS: ${NEXT_PUBLIC_SCHEDULED_HOURS:-8,18}
+        NEXT_PUBLIC_FEED_MIN_INTERVAL_SECONDS: ${NEXT_PUBLIC_FEED_MIN_INTERVAL_SECONDS:-60}
+    image: ${FRONTEND_IMAGE:-aquafeeder/frontend}:${FRONTEND_TAG:-latest}
+    container_name: ${COMPOSE_PROJECT_NAME:-aquafeeder}-frontend
+    restart: unless-stopped
+    env_file:
+      - ${AQUAFEEDER_ENV_FILE:-.env.dev}
+    ports:
+      - "${FRONTEND_BIND_IP:-0.0.0.0}:${FRONTEND_HOST_PORT:-3000}:3000"
+    depends_on:
+      - backend
+
+volumes:
+  pg-data:
+  mqtt-data:
