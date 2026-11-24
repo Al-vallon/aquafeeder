@@ -1,7 +1,4 @@
 # AquaFeeder v2
-
-Migration de l'application AquaFeeder vers une architecture **archi n-tierst**.
-
 ---
 
 ## 1. Architecture
